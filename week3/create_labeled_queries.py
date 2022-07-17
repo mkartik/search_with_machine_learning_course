@@ -1,4 +1,5 @@
 import os
+import re
 import argparse
 import xml.etree.ElementTree as ET
 import pandas as pd
@@ -7,12 +8,25 @@ import csv
 
 # Useful if you want to perform stemming.
 import nltk
+from nltk.tokenize import word_tokenize
+nltk.download('punkt')
 stemmer = nltk.stem.PorterStemmer()
 
 categories_file_name = r'/workspace/datasets/product_data/categories/categories_0001_abcat0010000_to_pcmcat99300050000.xml'
 
 queries_file_name = r'/workspace/datasets/train.csv'
 output_file_name = r'/workspace/datasets/labeled_query_data.txt'
+
+def normalize_data(text):
+    text = text.lower()
+    # remove punctuations etc
+    text = re.sub(r'[^A-Za-z0-9 ]+', '', text)
+    # remove extra space
+    text = re.sub("\s\s+", " ", text)
+    # stem the text
+    tokens = word_tokenize(text)
+    stemmed_tokens = [stemmer.stem(token) for token in tokens]
+    return ' '.join(stemmed_tokens)
 
 parser = argparse.ArgumentParser(description='Process arguments.')
 general = parser.add_argument_group("general")
@@ -49,8 +63,23 @@ df = pd.read_csv(queries_file_name)[['category', 'query']]
 df = df[df['category'].isin(categories)]
 
 # IMPLEMENT ME: Convert queries to lowercase, and optionally implement other normalization, like stemming.
+print ("Normalizing data queries")
+df['query'] = df['query'].apply(normalize_data)
 
 # IMPLEMENT ME: Roll up categories to ancestors to satisfy the minimum number of queries per category.
+print ("Rolling up categories having fewer than %d queries" % min_queries)
+query_count_per_cat = df.groupby(['category']).size().reset_index(name='counts')
+num_query_lower_than_threshold = query_count_per_cat[query_count_per_cat['counts'] < min_queries].shape[0]
+
+while num_query_lower_than_threshold > 0:
+    df = df.merge(query_count_per_cat, how = 'left', on = 'category').merge(parents_df, on = 'category', how ='left')
+    df.loc[df.counts < min_queries, 'category'] = df['parent']
+    df = df.drop(['counts', 'parent'], axis=1)
+    query_count_per_cat = df.groupby(['category']).size().reset_index(name='counts')
+    num_query_lower_than_threshold = query_count_per_cat[query_count_per_cat['counts'] < min_queries].shape[0]
+    print ("Categories obtained after roll up: ", query_count_per_cat.shape[0])
+print ("Final unique categories obtained after roll up: ", query_count_per_cat.shape[0])
+
 
 # Create labels in fastText format.
 df['label'] = '__label__' + df['category']
